@@ -75,19 +75,88 @@ namespace TfsOps
             return buildStatus;
         }
 
-        private IEnumerable<IBuildDetail> GetBuildsFromTfs(int maxDays, string teamProject, string buildDefinition)
+        private IBuildDetailSpec SetupBuildDetailQuery(int maxDays, string teamProject, string buildDefinition)
         {
             IBuildDetailSpec spec = string.IsNullOrEmpty(buildDefinition)
-                                        ? BuildServer.CreateBuildDetailSpec(teamProject)
-                                        : BuildServer.CreateBuildDetailSpec(teamProject, buildDefinition);
+                                        ? this.BuildServer.CreateBuildDetailSpec(teamProject)
+                                        : this.BuildServer.CreateBuildDetailSpec(teamProject, buildDefinition);
 
             spec.InformationTypes = null;
             spec.MinFinishTime = DateTime.Now.Subtract(TimeSpan.FromDays(maxDays));
             spec.MaxFinishTime = DateTime.Now;
             spec.QueryDeletedOption = QueryDeletedOption.IncludeDeleted;
+            return spec;
+        }
+
+        private IEnumerable<IBuildDetail> GetBuildsFromTfs(int maxDays, string teamProject, string buildDefinition)
+        {
+            var spec = this.SetupBuildDetailQuery(maxDays, teamProject, buildDefinition);
 
             var builds = BuildServer.QueryBuilds(spec).Builds.OrderBy(b => b.BuildDefinition.Name).ThenByDescending(b => b.FinishTime);
             return builds;
+        }
+
+
+        private IEnumerable<IBuildDetail> GetBuildsFromTfsOrderByFinish(int maxDays, string teamProject, string buildDefinition)
+        {
+            var spec = this.SetupBuildDetailQuery(maxDays, teamProject, buildDefinition);
+
+            var builds = BuildServer.QueryBuilds(spec).Builds.OrderByDescending(b => b.FinishTime);
+            return builds;
+        }
+
+        /// <summary>
+        /// This function is responsible for running a quick query to get broken build stats.
+        /// It counts each and every failure int a 24hour period.  It doesn't single out a chain, but counts individual failures
+        /// </summary>
+        /// <param name="tfsProject"></param>
+        /// <param name="tfsConfigurations"></param>
+        /// <returns></returns>
+        public int GetRawBuildStatsDownTime(string tfsProject, List<string> tfsConfigurations)
+        {
+            IEnumerable<IBuildDetail> info = GetBuildsFromTfsOrderByFinish(1, tfsProject, "");
+            int totalDownTimeMinutes = 0;
+
+            var currentDefinition = string.Empty;
+
+            if (info == null) return 0;
+
+           List<IBuildDetail> targetProjectsList = new List<IBuildDetail>();
+            foreach (var project in info)
+            {
+                if (tfsConfigurations.Contains(project.BuildDefinition.Name))
+                {
+                    targetProjectsList.Add(project);
+                }
+            }
+
+            var projIndex = 0;
+            var projectCount = targetProjectsList.Count();
+
+            while (projIndex <= projectCount)
+            {
+                var project = targetProjectsList.ElementAt(projIndex);
+                if (project.Status == Microsoft.TeamFoundation.Build.Client.BuildStatus.Failed)
+                {
+                    projIndex++;
+                    // walk down list until next good build or end of list...
+                    bool breakOut = false;
+                    while (projIndex <= projectCount || targetProjectsList.ElementAt(projIndex).Status != Microsoft.TeamFoundation.Build.Client.BuildStatus.Succeeded )
+                    {
+                        TimeSpan span = targetProjectsList.ElementAt(projIndex).FinishTime - project.FinishTime;
+                        
+                        if (span.Minutes > 1)
+                        {
+                            totalDownTimeMinutes += span.Minutes;
+                            break;
+                        }
+                        projIndex++;
+                    }
+                }
+                projIndex++;
+            }
+
+            return totalDownTimeMinutes;
         }
 
         /// <summary>

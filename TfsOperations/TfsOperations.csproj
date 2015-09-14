@@ -46,7 +46,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="BuildStatus.cs" />
-    <Compile Include="IBuildCommunicator.cs" />
+    <Compile Include="Interfaces\IBuildCommunicator.cs" />
     <Compile Include="Interfaces\IBuildStats.cs" />
     <Compile Include="Project.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
